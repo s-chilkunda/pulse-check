@@ -62,10 +62,14 @@ st.markdown("""
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 # --- DATA LOADING ---
+# We set ttl=300, which means the app will "remember" the data for 5 minutes (300 seconds)
+# unless we manually clear the cache.
 def get_data():
-    students = conn.read(worksheet="Students", ttl=0)
-    attendance = conn.read(worksheet="Attendance", ttl=0)
+    students = conn.read(worksheet="Students", ttl=300)
+    attendance = conn.read(worksheet="Attendance", ttl=300)
     return students, attendance
+
+students_df, attendance_df = get_data()
 
 students_df, attendance_df = get_data()
 
