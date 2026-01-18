@@ -61,9 +61,7 @@ st.markdown("""
 # 2. Connect to Google Sheets
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# --- DATA LOADING ---
-# We set ttl=300, which means the app will "remember" the data for 5 minutes (300 seconds)
-# unless we manually clear the cache.
+# --- DATA LOADING (With 5-minute Caching to prevent 429 Errors) ---
 def get_data():
     students = conn.read(worksheet="Students", ttl=300)
     attendance = conn.read(worksheet="Attendance", ttl=300)
@@ -71,13 +69,11 @@ def get_data():
 
 students_df, attendance_df = get_data()
 
-students_df, attendance_df = get_data()
-
 # --- HEADER ---
 st.title("PulseCheck")
 st.markdown("##### Performance & Attendance Management")
 
-# --- SIDEBAR ---
+# --- SIDEBAR: REGISTRATION ---
 st.sidebar.title("Management")
 with st.sidebar.expander("Register New Student", expanded=False):
     with st.form("reg_form"):
@@ -85,65 +81,111 @@ with st.sidebar.expander("Register New Student", expanded=False):
         if st.form_submit_button("Add to Roster"):
             if name and name not in students_df["Name"].values:
                 new_row = pd.DataFrame([{
-                    "Student ID": len(students_df) + 1, "Name": name, 
-                    "Total Classes": 0, "Date Joined": datetime.now().strftime("%Y-%m-%d")
+                    "Student ID": len(students_df) + 1, 
+                    "Name": name, 
+                    "Total Classes": 0, 
+                    "Date Joined": datetime.now().strftime("%Y-%m-%d")
                 }])
+                # Update Google Sheets
                 conn.update(worksheet="Students", data=pd.concat([students_df, new_row], ignore_index=True))
+                # Clear cache so the new student appears in the dropdown immediately
                 st.cache_data.clear()
                 st.rerun()
+            elif name:
+                st.sidebar.warning("Student already registered.")
 
-# --- MAIN INTERFACE ---
+# --- MAIN INTERFACE: CHECK-IN ---
 st.divider()
 st.subheader("Class Check-in")
-col1, col2 = st.columns([2, 1])
 
-with col1:
-    member = st.selectbox("Select Student", students_df["Name"].sort_values())
-with col2:
-    checkin_date = st.date_input("Date", datetime.now())
+# Handle case where no students exist yet
+if students_df.empty:
+    st.warning("No students found in the database. Please register a student in the sidebar first!")
+else:
+    col1, col2 = st.columns([2, 1])
 
-if st.button("Log Attendance", use_container_width=True):
-    # Log entry
-    log = pd.DataFrame([{
-        "Date": checkin_date.strftime("%Y-%m-%d"), 
-        "Student ID": students_df[students_df["Name"] == member]["Student ID"].values[0], 
-        "Name": member
-    }])
-    conn.update(worksheet="Attendance", data=pd.concat([attendance_df, log], ignore_index=True))
-    
-    # Update total
-    students_df.loc[students_df["Name"] == member, "Total Classes"] += 1
-    conn.update(worksheet="Students", data=students_df)
-    
-    st.toast(f"Logged {member}", icon="✅")
-    st.cache_data.clear()
-    st.rerun()
+    with col1:
+        member = st.selectbox("Select Student", students_df["Name"].sort_values())
+    with col2:
+        checkin_date = st.date_input("Date", datetime.now())
 
-# --- ANALYTICS ---
+    if st.button("Log Attendance", use_container_width=True):
+        # 1. Prepare Log Entry
+        student_id = students_df[students_df["Name"] == member]["Student ID"].values[0]
+        log = pd.DataFrame([{
+            "Date": checkin_date.strftime("%Y-%m-%d"), 
+            "Student ID": student_id, 
+            "Name": member
+        }])
+        
+        # 2. Update Attendance Sheet
+        updated_attendance = pd.concat([attendance_df, log], ignore_index=True)
+        conn.update(worksheet="Attendance", data=updated_attendance)
+        
+        # 3. Update Lifetime Count in Students Sheet
+        students_df.loc[students_df["Name"] == member, "Total Classes"] += 1
+        conn.update(worksheet="Students", data=students_df)
+        
+        # 4. Notify and Clear Cache
+        st.toast(f"Logged {member}", icon="✅")
+        st.cache_data.clear()
+        st.rerun()
+
+# --- ANALYTICS SECTION ---
 st.divider()
+st.subheader("📊 Analytics Dashboard")
 t1, t2, t3 = st.tabs(["Monthly Report", "Yearly Leaderboard", "Member History"])
 
-if not attendance_df.empty:
+# Gatekeeper: Check if attendance data exists
+has_attendance = not attendance_df.empty and len(attendance_df) > 0
+
+if has_attendance:
     attendance_df['Date'] = pd.to_datetime(attendance_df['Date'])
 
 with t1:
-    curr = datetime.now()
-    m_data = attendance_df[(attendance_df['Date'].dt.month == curr.month) & (attendance_df['Date'].dt.year == curr.year)]
-    if not m_data.empty:
-        summary = m_data['Name'].value_counts().reset_index()
-        summary.columns = ['Name', 'Check-ins']
-        st.dataframe(summary, hide_index=True, use_container_width=True)
+    st.write(f"### Attendance for {datetime.now().strftime('%B %Y')}")
+    if has_attendance:
+        curr = datetime.now()
+        m_data = attendance_df[(attendance_df['Date'].dt.month == curr.month) & 
+                               (attendance_df['Date'].dt.year == curr.year)]
+        
+        if not m_data.empty:
+            summary = m_data['Name'].value_counts().reset_index()
+            summary.columns = ['Name', 'Check-ins']
+            st.dataframe(summary, hide_index=True, use_container_width=True)
+        else:
+            st.info("No check-ins recorded for this calendar month.")
     else:
-        st.info("No records for this month.")
+        st.info("Data will appear here once the first class is logged.")
 
 with t2:
-    st.dataframe(students_df[['Name', 'Total Classes']].sort_values('Total Classes', ascending=False), hide_index=True, use_container_width=True)
+    st.write(f"### Rankings ({datetime.now().year})")
+    if has_attendance:
+        y_data = attendance_df[attendance_df['Date'].dt.year == datetime.now().year]
+        if not y_data.empty:
+            y_summary = y_data['Name'].value_counts().reset_index()
+            y_summary.columns = ['Name', 'Total Check-ins']
+            st.dataframe(y_summary, hide_index=True, use_container_width=True)
+        else:
+            st.info("No records found for the current year.")
+    else:
+        st.info("Leaderboard is currently empty.")
 
 with t3:
-    search = st.selectbox("Search Student", students_df["Name"].sort_values(), key="search")
-    history = attendance_df[attendance_df['Name'] == search].sort_values('Date', ascending=False)
-    if not history.empty:
-        st.metric("Total Sessions", len(history))
-        display_h = history[['Date']].copy()
-        display_h['Date'] = display_h['Date'].dt.strftime('%Y-%m-%d')
-        st.dataframe(display_h, hide_index=True, use_container_width=True)
+    st.write("### Member Search")
+    if not students_df.empty:
+        search = st.selectbox("Search Student", students_df["Name"].sort_values(), key="search")
+        
+        if has_attendance:
+            history = attendance_df[attendance_df['Name'] == search].sort_values('Date', ascending=False)
+            if not history.empty:
+                st.metric("Total Sessions", len(history))
+                display_h = history[['Date']].copy()
+                display_h['Date'] = display_h['Date'].dt.strftime('%Y-%m-%d')
+                st.dataframe(display_h, hide_index=True, use_container_width=True)
+            else:
+                st.warning(f"No session history found for {search}.")
+        else:
+            st.info("Log your first session to enable history search.")
+    else:
+        st.warning("Please register students to enable history lookup.")
