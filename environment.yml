@@ -1,0 +1,10 @@
+name: pulse_check 
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pandas
+  - pip
+  - pip:
+      - -r requirements.txt
+
