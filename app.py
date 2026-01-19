@@ -6,6 +6,21 @@ from datetime import datetime
 # 1. Page Config
 st.set_page_config(page_title="PulseCheck", page_icon="⚡", layout="wide")
 
+st.markdown(
+    """
+    <!-- Google tag (gtag.js) -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-2EHT5N04JY"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+    
+      gtag('config', 'G-2EHT5N04JY');
+    </script>
+    """,
+    unsafe_allow_html=True
+)
+
 # 2. Password & Environment Logic
 # Change these to whatever you like!
 PASS_PROD = "lucky"  
