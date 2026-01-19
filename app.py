@@ -3,8 +3,50 @@ from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 from datetime import datetime
 
-# 1. Page Configuration & Minimalist Theme
+# 1. Page Config
 st.set_page_config(page_title="PulseCheck", page_icon="⚡", layout="wide")
+
+# 2. Password & Environment Logic
+# Change these to whatever you like!
+PASS_PROD = "lucky"  
+PASS_TEST = "testenv"
+
+if "authenticated" not in st.session_state:
+    st.session_state["authenticated"] = False
+    st.session_state["db_choice"] = None
+
+if not st.session_state["authenticated"]:
+    st.title("⚡ PulseCheck Login")
+    pwd = st.text_input("Say the magic word!", type="password")
+    if st.button("Unlock"):
+        if pwd == PASS_PROD:
+            st.session_state["authenticated"] = True
+            st.session_state["db_choice"] = "gsheets"
+            st.rerun()
+        elif pwd == PASS_TEST:
+            st.session_state["authenticated"] = True
+            st.session_state["db_choice"] = "gsheets_test"
+            st.rerun()
+        else:
+            st.error("Invalid Access Code")
+    st.stop()
+
+# 3. Connection Setup
+conn = st.connection(st.session_state["db_choice"], type=GSheetsConnection)
+
+# --- DATA LOADING ---
+def get_data():
+    # Keep the 5-min cache to avoid the 429 errors we saw earlier
+    students = conn.read(worksheet="Students", ttl=300)
+    attendance = conn.read(worksheet="Attendance", ttl=300)
+    return students, attendance
+
+students_df, attendance_df = get_data()
+
+# --- HEADER (Visual indicator of which DB you are in) ---
+env_label = "" if st.session_state["db_choice"] == "gsheets" else "[TEST MODE]"
+st.title(f"PulseCheck {env_label}")
+st.markdown("##### Performance & Attendance Management")
 
 st.markdown("""
     <style>
@@ -57,21 +99,6 @@ st.markdown("""
     }
     </style>
     """, unsafe_allow_html=True)
-
-# 2. Connect to Google Sheets
-conn = st.connection("gsheets", type=GSheetsConnection)
-
-# --- DATA LOADING (With 5-minute Caching to prevent 429 Errors) ---
-def get_data():
-    students = conn.read(worksheet="Students", ttl=300)
-    attendance = conn.read(worksheet="Attendance", ttl=300)
-    return students, attendance
-
-students_df, attendance_df = get_data()
-
-# --- HEADER ---
-st.title("PulseCheck")
-st.markdown("##### Performance & Attendance Management")
 
 # --- SIDEBAR: REGISTRATION ---
 st.sidebar.title("Management")
